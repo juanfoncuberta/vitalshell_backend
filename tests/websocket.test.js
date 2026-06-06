@@ -109,7 +109,11 @@ describe('WebSocket broadcast', () => {
     await ws.nextMessage(); // consume 'connected'
 
     // Post a sensor reading in parallel — triggers broadcast
-    request(app).post('/api/sensors').send({ temperature: 23, humidity: 55 }).end(() => {});
+    request(app)
+      .post('/api/sensors')
+      .set('X-API-Key', 'test-key')
+      .send({ temperature: 23, humidity: 55 })
+      .end(() => {});
 
     const update = await ws.nextMessage();
     expect(update.type).toBe('sensor_update');

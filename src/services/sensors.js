@@ -32,29 +32,26 @@ function getHistory(period = '24h') {
   const seconds = PERIOD_SECONDS[period] ?? PERIOD_SECONDS['24h'];
   const since = new Date(Date.now() - seconds * 1000).toISOString();
 
-  if (period === '7d') {
-    // Group by calendar day
-    return db.prepare(`
-      SELECT
-        date(created_at) AS day,
-        ROUND(AVG(temperature), 2)   AS avg_temperature,
-        ROUND(AVG(humidity), 2)      AS avg_humidity,
-        ROUND(AVG(water_level), 2)   AS avg_water_level,
-        ROUND(AVG(battery_level), 2) AS avg_battery_level,
-        COUNT(*) AS count
-      FROM sensors
-      WHERE created_at >= ?
-      GROUP BY day
-      ORDER BY day ASC
-    `).all(since);
-  }
-
-  // For 1h / 24h return raw rows
-  return db.prepare(`
-    SELECT * FROM sensors
-    WHERE created_at >= ?
+  // Fetch all rows with their day and time extracted
+  const rows = db.prepare(`
+    SELECT
+      *,
+      date(created_at)              AS day,
+      strftime('%H:%M', created_at) AS time
+    FROM sensors
+    WHERE datetime(created_at) >= datetime(?)
     ORDER BY created_at ASC
   `).all(since);
+
+  // Group readings by calendar day
+  const dayMap = {};
+  for (const row of rows) {
+    const { day, ...reading } = row;
+    if (!dayMap[day]) dayMap[day] = { day, readings: [] };
+    dayMap[day].readings.push(reading);
+  }
+
+  return Object.values(dayMap);
 }
 
 function isOnline() {

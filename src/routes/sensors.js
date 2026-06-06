@@ -4,9 +4,10 @@ const { saveReading, getHistory } = require('../services/sensors');
 const { runRulesEngine } = require('../services/rules');
 const { getAllCached } = require('../services/apis');
 const { broadcast } = require('../websocket');
+const { requireApiKey } = require('../middleware/auth');
 
-// POST /api/sensors — ingest data from hardware (no auth)
-router.post('/', (req, res) => {
+// POST /api/sensors — ingest data from hardware (requires auth)
+router.post('/', requireApiKey, (req, res) => {
   const { temperature, humidity, water_level, battery_level, timestamp } = req.body;
 
   if (

@@ -29,7 +29,7 @@ function listRulesHistory({ period = '24h', limit = 20 } = {}) {
 
   return db.prepare(`
     SELECT * FROM rules
-    WHERE status = 'completed' AND updated_at >= ?
+    WHERE status = 'completed' AND datetime(updated_at) >= datetime(?)
     ORDER BY updated_at DESC
     LIMIT ?
   `).all(since, Number(limit));

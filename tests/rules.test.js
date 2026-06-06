@@ -130,7 +130,10 @@ describe('PATCH /api/rules/:id', () => {
 
   it('updates rule status', async () => {
     // First create a rule via the sensor endpoint
-    await request(app).post('/api/sensors').send({ temperature: 30 });
+    await request(app)
+      .post('/api/sensors')
+      .set('X-API-Key', 'test-key')
+      .send({ temperature: 30 });
 
     const listRes = await request(app)
       .get('/api/rules')
