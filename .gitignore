@@ -1,0 +1,10 @@
+node_modules/
+.env
+.claude/
+*.db
+*.db-shm
+*.db-wal
+coverage/
+.nyc_output/
+logs/
+*.log
