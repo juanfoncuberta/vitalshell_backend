@@ -4,7 +4,18 @@ const { getDb } = require('../db');
 // DB helpers
 // ---------------------------------------------------------------------------
 
-const VALID_STATUSES = ['pending', 'active', 'completed', 'disabled'];
+const VALID_STATUSES = ['pending', 'active', 'completed', 'disabled', 'inactive'];
+
+// SQLite stores datetime('now') as "2026-06-07 14:00:00" (UTC, no Z).
+// Convert every rule row to proper ISO8601 before returning it.
+function formatRule(row) {
+  if (!row) return null;
+  return {
+    ...row,
+    created_at: row.created_at ? new Date(row.created_at.replace(' ', 'T') + 'Z').toISOString() : null,
+    updated_at: row.updated_at ? new Date(row.updated_at.replace(' ', 'T') + 'Z').toISOString() : null,
+  };
+}
 
 const PERIOD_SECONDS = {
   '1h':  3600,
@@ -19,7 +30,7 @@ function listRules({ limit = 20, offset = 0 } = {}) {
     WHERE status IN ('active', 'pending')
     ORDER BY created_at DESC
     LIMIT ? OFFSET ?
-  `).all(Number(limit), Number(offset));
+  `).all(Number(limit), Number(offset)).map(formatRule);
 }
 
 function listRulesHistory({ period = '24h', limit = 20 } = {}) {
@@ -32,7 +43,7 @@ function listRulesHistory({ period = '24h', limit = 20 } = {}) {
     WHERE status = 'completed' AND datetime(updated_at) >= datetime(?)
     ORDER BY updated_at DESC
     LIMIT ?
-  `).all(since, Number(limit));
+  `).all(since, Number(limit)).map(formatRule);
 }
 
 function updateRuleStatus(id, status) {
@@ -45,7 +56,7 @@ function updateRuleStatus(id, status) {
   `).run(status, Number(id));
 
   if (info.changes === 0) return null;
-  return db.prepare('SELECT * FROM rules WHERE id = ?').get(Number(id));
+  return formatRule(db.prepare('SELECT * FROM rules WHERE id = ?').get(Number(id)));
 }
 
 function createRule(rule) {
@@ -62,7 +73,7 @@ function createRule(rule) {
     duration_hours: rule.duration_hours ?? null,
     trigger_source: rule.trigger_source ?? null,
   });
-  return db.prepare('SELECT * FROM rules WHERE id = ?').get(info.lastInsertRowid);
+  return formatRule(db.prepare('SELECT * FROM rules WHERE id = ?').get(info.lastInsertRowid));
 }
 
 // ---------------------------------------------------------------------------

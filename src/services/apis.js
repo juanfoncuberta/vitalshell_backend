@@ -39,44 +39,79 @@ function getCachedData(source) {
 // ---------------------------------------------------------------------------
 
 async function fetchREData() {
-  try {
-    const now = new Date();
-    const start = new Date(now - 60 * 60 * 1000).toISOString();
-    const end = now.toISOString();
+  const now  = new Date();
+  const date = now.toISOString().slice(0, 10);  // "2026-06-07"
 
-    // Demanda peninsular en tiempo real
-    const { data } = await axios.get(
-      'https://apidatos.ree.es/es/datos/demanda/demanda-tiempo-real',
-      {
-        params: { start_date: start, end_date: end, time_trunc: 'hour' },
-        timeout: 10000,
-      }
-    );
+  // Two parallel calls:
+  //   demanda-tiempo-real → real-time demand MW (type 'Real')
+  //   balance-electrico   → renewable % for the day (type 'Renovable' / 'No-Renovable')
+  //   Note: balance-electrico only works with time_trunc=day, not hour.
+  const [demandRes, balanceRes] = await Promise.allSettled([
+    axios.get('https://apidatos.ree.es/es/datos/demanda/demanda-tiempo-real', {
+      params: {
+        start_date: new Date(now - 60 * 60 * 1000).toISOString(),
+        end_date:   now.toISOString(),
+        time_trunc: 'hour',
+      },
+      timeout: 10000,
+    }),
+    axios.get('https://apidatos.ree.es/es/datos/balance/balance-electrico', {
+      params: {
+        start_date: `${date}T00:00:00`,
+        end_date:   `${date}T23:59:59`,
+        time_trunc: 'day',
+      },
+      timeout: 10000,
+    }),
+  ]);
 
-    const included = data.included || [];
-    const demanda = included.find(i => i.type === 'Demanda real');
-    const renovable = included.find(i => i.type === 'Demanda renovable');
+  // demand_mw — type is 'Real' (not 'Demanda real')
+  let demand_mw = null;
+  if (demandRes.status === 'fulfilled') {
+    const included = demandRes.value.data.included || [];
+    const real = included.find(i => i.type === 'Real');
+    demand_mw = real?.attributes?.values?.at(-1)?.value ?? null;
+  } else {
+    console.warn('[REData] demand fetch failed:', demandRes.reason?.message);
+  }
 
-    const result = {
-      demand_mw:          demanda?.attributes?.values?.at(-1)?.value ?? null,
-      renewables_mw:      renovable?.attributes?.values?.at(-1)?.value ?? null,
-      renewables_percent: null,
-      co2_intensity:      null,
-      price_eur_mwh:      null,
-      source:             'REData',
-      fetched_at:         now.toISOString(),
-    };
+  // renewables_percent — balance-electrico nests values inside
+  // attributes.content[].attributes.values (one value per technology per day)
+  let renewables_percent = null;
+  if (balanceRes.status === 'fulfilled') {
+    const included = balanceRes.value.data.included || [];
 
-    if (result.demand_mw && result.renewables_mw) {
-      result.renewables_percent = Math.round((result.renewables_mw / result.demand_mw) * 100);
+    function sumGroupLastValue(group) {
+      const content = group?.attributes?.content ?? [];
+      return content.reduce((sum, sub) => {
+        const val = sub.attributes?.values?.at(-1)?.value;
+        return sum + (val ?? 0);
+      }, 0);
     }
 
-    setCache('redata', result);
-    return result;
-  } catch (err) {
-    console.warn('[apis] REData fetch failed:', err.message);
-    return getCachedData('redata');
+    const renovable   = included.find(i => i.type === 'Renovable');
+    const noRenovable = included.find(i => i.type === 'No-Renovable');
+    const renMWh      = renovable   ? sumGroupLastValue(renovable)   : null;
+    const noRenMWh    = noRenovable ? sumGroupLastValue(noRenovable) : null;
+
+    if (renMWh !== null && noRenMWh !== null && renMWh + noRenMWh > 0) {
+      renewables_percent = Math.round((renMWh / (renMWh + noRenMWh)) * 100);
+    }
+  } else {
+    console.warn('[REData] balance fetch failed:', balanceRes.reason?.message);
   }
+
+  const result = {
+    demand_mw,
+    renewables_percent,
+    co2_intensity: null,
+    price_eur_mwh: null,
+    source:        'REData',
+    fetched_at:    now.toISOString(),
+  };
+
+  setCache('redata', result);
+  return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -87,26 +122,41 @@ async function fetchWeather() {
   try {
     const { data } = await axios.get('https://api.open-meteo.com/v1/forecast', {
       params: {
-        latitude:       LAT,
-        longitude:      LON,
-        current:        'temperature_2m,relative_humidity_2m,precipitation,wind_speed_10m,weather_code',
-        hourly:         'temperature_2m,precipitation_probability',
-        forecast_days:  2,
-        timezone:       'Europe/Madrid',
+        latitude:        LAT,
+        longitude:       LON,
+        current:         'temperature_2m,relative_humidity_2m,precipitation,wind_speed_10m,weather_code,uv_index',
+        hourly:          'temperature_2m,relative_humidity_2m,wind_speed_10m,precipitation_probability,weather_code',
+        daily:           'precipitation_sum,et0_fao_evapotranspiration',
+        past_days:       7,
+        forecast_days:   2,
+        timezone:        'Europe/Madrid',
+        wind_speed_unit: 'kmh',
       },
       timeout: 10000,
     });
 
     const current = data.current ?? {};
+    const daily   = data.daily   ?? {};
+
+    // 7-day water balance: precipitation minus evapotranspiration (mm)
+    const precip = daily.precipitation_sum           ?? [];
+    const et0    = daily.et0_fao_evapotranspiration  ?? [];
+    const waterBalance = Math.round(
+      precip.reduce((sum, p, i) => sum + (p ?? 0) - (et0[i] ?? 0), 0) * 10
+    ) / 10;
+
     const result = {
-      temperature:           current.temperature_2m ?? null,
-      humidity:              current.relative_humidity_2m ?? null,
-      precipitation:         current.precipitation ?? null,
-      wind_speed:            current.wind_speed_10m ?? null,
-      weather_code:          current.weather_code ?? null,
-      hourly_forecast:       data.hourly ?? null,
-      source:                'Open-Meteo',
-      fetched_at:            new Date().toISOString(),
+      temperature:        current.temperature_2m          ?? null,
+      humidity:           current.relative_humidity_2m    ?? null,
+      precipitation:      current.precipitation           ?? null,
+      wind_speed:         current.wind_speed_10m          ?? null,
+      weather_code:       current.weather_code            ?? null,
+      uv_index:           current.uv_index                ?? null,
+      water_balance_7d:   waterBalance,
+      current_local_time: current.time                    ?? null,
+      hourly_forecast:    data.hourly                     ?? null,
+      source:             'Open-Meteo',
+      fetched_at:         new Date().toISOString(),
     };
 
     setCache('weather', result);
@@ -157,29 +207,36 @@ async function fetchAirQuality() {
 // ---------------------------------------------------------------------------
 
 async function fetchEFFIS() {
-  try {
-    // EFFIS current fire danger index via WMS/WFS public endpoint
-    const { data } = await axios.get(
-      'https://ies-ows.jrc.ec.europa.eu/effis',
-      {
-        params: {
-          SERVICE: 'WFS',
-          VERSION: '2.0.0',
-          REQUEST: 'GetFeature',
-          TYPENAMES: 'ms:modis.fires.viirs.24h',
-          OUTPUTFORMAT: 'application/json',
-          COUNT: 1,
-          // Bounding box around the node location ±2 degrees
-          BBOX: `${parseFloat(LAT) - 2},${parseFloat(LON) - 2},${parseFloat(LAT) + 2},${parseFloat(LON) + 2}`,
-        },
-        timeout: 15000,
-      }
-    );
+  const url    = 'https://ies-ows.jrc.ec.europa.eu/effis';
+  // Correct layer: ms:fwi_nuts5.fwi (confirmed via GetCapabilities)
+  // Previous layer ms:modis.fires.viirs.24h does not exist on this server.
+  const bbox   = `${parseFloat(LAT) - 2},${parseFloat(LON) - 2},${parseFloat(LAT) + 2},${parseFloat(LON) + 2}`;
+  const params = {
+    SERVICE:      'WFS',
+    VERSION:      '2.0.0',
+    REQUEST:      'GetFeature',
+    TYPENAMES:    'ms:fwi_nuts5.fwi',
+    OUTPUTFORMAT: 'application/json',
+    COUNT:        5,
+    BBOX:         bbox,
+  };
 
-    const features = data.features ?? [];
+  try {
+    const response = await axios.get(url, { params, timeout: 15000 });
+    const features = response.data.features ?? [];
+
+    // Average FWI over returned NUTS5 polygons that intersect the bounding box
+    const fwiValues = features
+      .map(f => f.properties?.fwi ?? f.properties?.FWI ?? null)
+      .filter(v => v !== null && v >= 0);
+
+    const fwi = fwiValues.length > 0
+      ? Math.round((fwiValues.reduce((s, v) => s + v, 0) / fwiValues.length) * 10) / 10
+      : null;
+
     const result = {
+      fwi_today:           fwi,
       active_fires_nearby: features.length,
-      fire_risk:           features.length > 0 ? 'high' : 'low',
       source:              'EFFIS',
       fetched_at:          new Date().toISOString(),
     };
@@ -187,8 +244,160 @@ async function fetchEFFIS() {
     setCache('effis', result);
     return result;
   } catch (err) {
-    console.warn('[apis] EFFIS fetch failed:', err.message);
+    console.warn('[EFFIS] fetch failed:', err.message);
+    if (err.response) {
+      console.warn('[EFFIS] HTTP', err.response.status, '—', JSON.stringify(err.response.data).slice(0, 300));
+    }
     return getCachedData('effis');
+  }
+}
+
+// ---------------------------------------------------------------------------
+// FWI — Fire Weather Index + Water Balance
+// Primary source: EFFIS ms:fwi_nuts5.fwi (fetchEFFIS).
+// Fallback: Open-Meteo daily data + Canadian FWI algorithm (Van Wagner 1987).
+//
+// NOTE: Open-Meteo has no fire_danger_index variable in any of their endpoints
+// (forecast, archive, climate). We compute it from first principles using the
+// same Canadian FWI algorithm that EFFIS uses internally.
+// ---------------------------------------------------------------------------
+
+// Canadian Forest Fire Weather Index System — Van Wagner (1987) TR-35
+// Inputs: array of {temp(°C), rh(%), wind(km/h), rain(mm)}, oldest first.
+// Returns today's FWI value.
+function canadianFWI(history) {
+  if (!history || history.length === 0) return null;
+
+  // Day-length adjustment factors (monthly, Jan–Dec index 0–11)
+  const LE = [6.5, 7.5, 9.0, 12.8, 13.9, 13.9, 12.4, 10.9, 9.4, 8.0, 7.0, 6.0]; // DMC
+  const LF = [-1.6, -1.6, -1.6, 0.9, 3.8, 5.8, 6.4, 5.0, 2.4, 0.4, -1.6, -1.6]; // DC
+
+  const month = new Date().getMonth();
+
+  // Start-of-season default moisture codes
+  let ffmc = 85.0;
+  let dmc  = 6.0;
+  let dc   = 15.0;
+
+  for (const { temp: T, rh: H, wind: W, rain: r } of history) {
+    // ── FFMC ─────────────────────────────────────────────────────────────────
+    const mo = 147.2 * (101 - ffmc) / (59.5 + ffmc);
+    let m = mo;
+
+    if (r > 0.5) {
+      const rf  = r - 0.5;
+      const mrr = 42.5 * rf * Math.exp(-100 / (251 - mo)) * (1 - Math.exp(-6.93 / rf));
+      m = mo <= 150 ? mo + mrr : mo + mrr + 0.0015 * (mo - 150) ** 2 * rf ** 0.5;
+      if (m > 250) m = 250;
+    }
+
+    const Ed = 0.942 * H ** 0.679 + 11 * Math.exp((H - 100) / 10) + 0.18 * (21.1 - T) * (1 - Math.exp(-0.115 * H));
+    const Ew = 0.618 * H ** 0.753 + 10 * Math.exp((H - 100) / 10) + 0.18 * (21.1 - T) * (1 - Math.exp(-0.115 * H));
+
+    if (m > Ed) {
+      const kd = 0.424 * (1 - ((100 - H) / 100) ** 1.7) + 0.0694 * W ** 0.5 * (1 - ((100 - H) / 100) ** 8);
+      m = Ed + (m - Ed) * 10 ** (-kd);
+    } else if (m < Ew) {
+      const kw = 0.424 * (1 - (H / 100) ** 1.7) + 0.0694 * W ** 0.5 * (1 - (H / 100) ** 8);
+      m = Ew - (Ew - m) * 10 ** (-kw);
+    }
+    ffmc = Math.max(0, Math.min(99, 59.5 * (250 - m) / (147.2 + m)));
+
+    // ── DMC ──────────────────────────────────────────────────────────────────
+    if (r > 1.5) {
+      const re = 0.92 * r - 1.27;
+      const Mo = 20 + 280 / Math.exp(0.023 * dmc);
+      const b  = dmc <= 33 ? 100 / (0.5 + 0.3 * dmc)
+               : dmc <= 65 ? 14 - 1.3 * Math.log(dmc)
+               :             6.2 * Math.log(dmc) - 17.2;
+      const Mr = Mo + 1000 * re / (48.77 + b * re);
+      dmc = Math.max(0, 43.43 * (5.6348 - Math.log(Mr - 20)));
+    }
+    if (T >= -1.1) {
+      dmc = Math.max(0, dmc + 100 * 1.894 * (T + 1.1) * (100 - H) * LE[month] * 0.0001);
+    }
+
+    // ── DC ───────────────────────────────────────────────────────────────────
+    if (r > 2.8) {
+      const rd = 0.83 * r - 1.27;
+      const Qr = 800 * Math.exp(-dc / 400) + 3.937 * rd;
+      dc = Math.max(0, 400 * Math.log(800 / Qr));
+    }
+    if (T >= -2.8) {
+      dc = Math.max(0, dc + 0.5 * (0.36 * (T + 2.8) + LF[month]));
+    }
+  }
+
+  // ── ISI ──────────────────────────────────────────────────────────────────
+  const Wf  = history[history.length - 1].wind;
+  const mf  = 147.2 * (101 - ffmc) / (59.5 + ffmc);
+  const isi = 0.208 * Math.exp(0.05039 * Wf) * 91.9 * Math.exp(-0.1386 * mf) * (1 + mf ** 5.31 / 49300000);
+
+  // ── BUI ──────────────────────────────────────────────────────────────────
+  const bui = Math.max(0,
+    dmc <= 0.4 * dc
+      ? 0.8 * dmc * dc / (dmc + 0.4 * dc)
+      : dmc - (1 - 0.8 * dc / (dmc + 0.4 * dc)) * (0.92 + (0.0114 * dmc) ** 1.7)
+  );
+
+  // ── FWI ──────────────────────────────────────────────────────────────────
+  const fD = bui <= 80
+    ? 0.626 * bui ** 0.809 + 2
+    : 1000 / (25 + 108.64 * Math.exp(-0.023 * bui));
+  const B   = 0.1 * isi * fD;
+  const fwi = B > 1 ? Math.exp(2.72 * (0.434 * Math.log(B)) ** 0.647) : B;
+
+  return Math.max(0, Math.round(fwi * 10) / 10);
+}
+
+async function fetchFWI() {
+  try {
+    const { data } = await axios.get('https://api.open-meteo.com/v1/forecast', {
+      params: {
+        latitude:        LAT,
+        longitude:       LON,
+        daily:           'temperature_2m_max,relative_humidity_2m_min,wind_speed_10m_max,precipitation_sum,et0_fao_evapotranspiration',
+        past_days:       30,
+        forecast_days:   3,
+        timezone:        'Europe/Madrid',
+        wind_speed_unit: 'kmh',
+      },
+      timeout: 10000,
+    });
+
+    const d = data.daily ?? {};
+    const n = (d.time ?? []).length;
+
+    // Indices 0–29 = past 30 days; index 30 = today
+    const history = [];
+    for (let i = 0; i < Math.min(n, 31); i++) {
+      history.push({
+        temp: d.temperature_2m_max?.[i]          ?? 20,
+        rh:   d.relative_humidity_2m_min?.[i]    ?? 50,
+        wind: d.wind_speed_10m_max?.[i]          ?? 10,
+        rain: d.precipitation_sum?.[i]           ?? 0,
+      });
+    }
+
+    // Water balance: accumulated difference over past 30 days (indices 0–29)
+    const precip = d.precipitation_sum          ?? [];
+    const et0    = d.et0_fao_evapotranspiration ?? [];
+    const waterBalance = Math.round(
+      precip.slice(0, 30).reduce((sum, p, i) => sum + (p ?? 0) - (et0[i] ?? 0), 0) * 10
+    ) / 10;
+
+    const result = {
+      fwi_today:        canadianFWI(history),
+      water_balance_mm: waterBalance,
+      source:           'Open-Meteo (Canadian FWI)',
+      fetched_at:       new Date().toISOString(),
+    };
+
+    setCache('fwi', result);
+    return result;
+  } catch (err) {
+    console.warn('[FWI] Open-Meteo fetch failed:', err.message);
+    return getCachedData('fwi');
   }
 }
 
@@ -304,6 +513,7 @@ function getAllCached() {
     air_quality: getCachedData('air_quality'),
     redata:      getCachedData('redata'),
     effis:       getCachedData('effis'),
+    fwi:         getCachedData('fwi'),
     aemet:       getCachedData('aemet'),
     nasa_power:  getCachedData('nasa_power'),
   };
@@ -314,6 +524,7 @@ module.exports = {
   fetchWeather,
   fetchAirQuality,
   fetchEFFIS,
+  fetchFWI,
   fetchAEMET,
   fetchNASAPower,
   getAllCached,

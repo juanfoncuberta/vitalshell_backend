@@ -12,16 +12,23 @@ describe('GET /api/system/health', () => {
 
   it('returns expected shape', async () => {
     const res = await request(app).get('/api/system/health');
-    expect(res.body).toHaveProperty('status');
-    expect(res.body).toHaveProperty('sensor_online');
+    expect(res.body).toHaveProperty('timestamp');
+    expect(res.body).toHaveProperty('sensors');
     expect(res.body).toHaveProperty('apis');
-    expect(res.body).toHaveProperty('uptime_seconds');
-    expect(['healthy', 'degraded']).toContain(res.body.status);
+    expect(res.body.sensors).toHaveProperty('status');
+    expect(res.body.sensors).toHaveProperty('last_seen');
+    expect(['open_meteo', 'nasa_power', 'redata', 'effis', 'aemet']).toEqual(
+      expect.arrayContaining(Object.keys(res.body.apis))
+    );
   });
 
-  it('reports sensor as offline when no reading exists', async () => {
-    // Fresh DB has no readings
+  it('sensors block has valid status and last_seen', async () => {
     const res = await request(app).get('/api/system/health');
-    expect(res.body.sensor_online).toBe(false);
+    expect(['ok', 'warning', 'danger']).toContain(res.body.sensors.status);
+    // last_seen is null or a valid ISO8601 string
+    const { last_seen } = res.body.sensors;
+    if (last_seen !== null) {
+      expect(() => new Date(last_seen).toISOString()).not.toThrow();
+    }
   });
 });

@@ -35,23 +35,25 @@ function getHistory(period = '24h') {
   // Fetch all rows with their day and time extracted
   const rows = db.prepare(`
     SELECT
-      *,
-      date(created_at)              AS day,
-      strftime('%H:%M', created_at) AS time
+      date(created_at)                 AS date,
+      strftime('%H:%M:%S', created_at) AS time,
+      temperature,
+      humidity,
+      water_level,
+      battery_level
     FROM sensors
     WHERE datetime(created_at) >= datetime(?)
     ORDER BY created_at ASC
   `).all(since);
 
-  // Group readings by calendar day
-  const dayMap = {};
-  for (const row of rows) {
-    const { day, ...reading } = row;
-    if (!dayMap[day]) dayMap[day] = { day, readings: [] };
-    dayMap[day].readings.push(reading);
+  // Group intervals by calendar date
+  const dateMap = {};
+  for (const { date, ...interval } of rows) {
+    if (!dateMap[date]) dateMap[date] = { date, intervals: [] };
+    dateMap[date].intervals.push(interval);
   }
 
-  return Object.values(dayMap);
+  return Object.values(dateMap);
 }
 
 function isOnline() {

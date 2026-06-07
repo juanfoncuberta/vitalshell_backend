@@ -2,9 +2,17 @@ const express = require('express');
 const router = express.Router();
 const { getComfort, setComfort } = require('../services/comfort');
 
+function formatComfort(row) {
+  const { id, updated_at, ...rest } = row;
+  return {
+    ...rest,
+    updated_at: updated_at ? new Date(updated_at.replace(' ', 'T') + 'Z').toISOString() : null,
+  };
+}
+
 // GET /api/comfort
 router.get('/', (req, res) => {
-  res.json(getComfort());
+  res.json(formatComfort(getComfort()));
 });
 
 // POST /api/comfort
@@ -23,8 +31,7 @@ router.post('/', (req, res) => {
     }
   }
 
-  const updated = setComfort({ temperature_min, temperature_max, humidity_min, humidity_max });
-  res.json(updated);
+  res.json(formatComfort(setComfort({ temperature_min, temperature_max, humidity_min, humidity_max })));
 });
 
 module.exports = router;

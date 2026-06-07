@@ -4,6 +4,7 @@ const {
   fetchWeather,
   fetchAirQuality,
   fetchEFFIS,
+  fetchFWI,
   fetchAEMET,
   fetchNASAPower,
   getAllCached,
@@ -52,6 +53,11 @@ function startCronJobs() {
     refreshAndEvaluate('EFFIS', fetchEFFIS, null);
   });
 
+  // Every 30 min — Fire Weather Index (Open-Meteo FD)
+  cron.schedule('*/30 * * * *', () => {
+    refreshAndEvaluate('FWI', fetchFWI, null);
+  });
+
   // Every 15 min (offset 2) — AEMET
   cron.schedule('2,17,32,47 * * * *', () => {
     refreshAndEvaluate('AEMET', fetchAEMET, 'environmental_update');
@@ -83,6 +89,7 @@ async function initialFetch() {
     fetchAirQuality(),
     fetchREData(),
     fetchEFFIS(),
+    fetchFWI(),
     fetchAEMET(),
     fetchNASAPower(),
   ]);

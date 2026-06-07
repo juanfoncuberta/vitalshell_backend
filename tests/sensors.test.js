@@ -58,12 +58,15 @@ describe('GET /api/sensors/history', () => {
     expect(res.body).toHaveProperty('period', '1h');
     expect(Array.isArray(res.body.data)).toBe(true);
 
-    // Each entry is a day object with a readings array
+    // Each entry is a date object with an intervals array
     const day = res.body.data[0];
-    expect(day).toHaveProperty('day');
-    expect(Array.isArray(day.readings)).toBe(true);
-    expect(day.readings[0]).toHaveProperty('temperature');
-    expect(day.readings[0]).toHaveProperty('time');
+    expect(day).toHaveProperty('date');
+    expect(Array.isArray(day.intervals)).toBe(true);
+    expect(day.intervals[0]).toHaveProperty('temperature');
+    expect(day.intervals[0]).toHaveProperty('time');
+    expect(day.intervals[0].time).toMatch(/^\d{2}:\d{2}:\d{2}$/);
+    expect(day.intervals[0]).not.toHaveProperty('id');
+    expect(day.intervals[0]).not.toHaveProperty('created_at');
   });
 
   it('count reflects number of days, not readings', async () => {

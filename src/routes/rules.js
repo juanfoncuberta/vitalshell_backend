@@ -13,7 +13,7 @@ router.get('/', (req, res) => {
   }
 
   const rules = listRules({ limit, offset });
-  res.json({ limit, offset, count: rules.length, data: rules });
+  res.json({ limit, offset, total: rules.length, data: rules });
 });
 
 // GET /api/rules/history?period=1h|24h|7d&limit=20
@@ -26,10 +26,10 @@ router.get('/history', (req, res) => {
   }
 
   const history = listRulesHistory({ period, limit });
-  res.json({ period, limit, count: history.length, data: history });
+  res.json({ period, limit, total: history.length, data: history });
 });
 
-// PATCH /api/rules/:id — { status: 'active'|'pending'|'completed'|'disabled' }
+// PATCH /api/rules/:id — { status: 'active'|'pending'|'completed'|'disabled'|'inactive' }
 router.patch('/:id', (req, res) => {
   const id = parseInt(req.params.id, 10);
   const { status } = req.body;
@@ -47,7 +47,7 @@ router.patch('/:id', (req, res) => {
       return res.status(404).json({ error: `Rule ${id} not found` });
     }
     broadcast('rule_update', rule);
-    res.json(rule);
+    res.json({ ok: true, id: rule.id, status: rule.status });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }

@@ -1,42 +1,52 @@
 const express = require('express');
 const router = express.Router();
-const { isOnline } = require('../services/sensors');
+const { getLatestReading } = require('../services/sensors');
 const { getCache } = require('../services/apis');
-
-const API_SOURCES = ['weather', 'air_quality', 'redata', 'effis', 'aemet', 'nasa_power'];
 
 // Age threshold after which a cache entry is considered stale (30 min)
 const STALE_MS = 30 * 60 * 1000;
 
-function buildApiStatus() {
-  return API_SOURCES.reduce((acc, source) => {
+function sensorsHealth() {
+  const latest = getLatestReading();
+  if (!latest) return { last_seen: null, status: 'danger' };
+  const diffSec = (Date.now() - new Date(latest.created_at).getTime()) / 1000;
+  const status  = diffSec < 30 ? 'ok' : diffSec < 120 ? 'warning' : 'danger';
+  return { last_seen: new Date(latest.created_at).toISOString(), status };
+}
+
+// Map internal cache-source keys to the spec's field names
+const SOURCE_MAP = {
+  open_meteo: 'weather',
+  nasa_power: 'nasa_power',
+  redata:     'redata',
+  effis:      'effis',
+  aemet:      'aemet',
+};
+
+function apisHealth() {
+  const result = {};
+  for (const [key, source] of Object.entries(SOURCE_MAP)) {
     const cached = getCache(source);
     if (!cached) {
-      acc[source] = { status: 'no_data' };
+      result[key] = { status: 'no_data', last_updated: null };
     } else {
-      const ageMs = Date.now() - new Date(cached.updated_at).getTime();
-      acc[source] = {
-        status:     ageMs < STALE_MS ? 'ok' : 'stale',
-        updated_at: cached.updated_at,
-        age_seconds: Math.round(ageMs / 1000),
+      const ageMs      = Date.now() - new Date(cached.updated_at).getTime();
+      const lastUpdated = new Date(cached.updated_at.replace(' ', 'T') + 'Z').toISOString();
+      result[key] = {
+        status:       ageMs < STALE_MS ? 'ok' : 'stale',
+        last_updated: lastUpdated,
       };
     }
-    return acc;
-  }, {});
+  }
+  return result;
 }
 
 // GET /api/system/health — no auth required
 router.get('/', (req, res) => {
-  const sensorOnline = isOnline();
-  const apis = buildApiStatus();
-  const allApisOk = Object.values(apis).every(a => a.status === 'ok');
-
   res.json({
-    status:        sensorOnline && allApisOk ? 'healthy' : 'degraded',
-    sensor_online: sensorOnline,
-    apis,
-    uptime_seconds: Math.round(process.uptime()),
-    timestamp:      new Date().toISOString(),
+    timestamp: new Date().toISOString(),
+    sensors:   sensorsHealth(),
+    apis:      apisHealth(),
   });
 });
 
