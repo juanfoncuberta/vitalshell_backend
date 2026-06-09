@@ -1,17 +1,17 @@
 const express = require('express');
 const router = express.Router();
-const { getLatestReading } = require('../services/sensors');
+const { getLastSeenAt } = require('../services/sensors');
 const { getCache } = require('../services/apis');
 
 // Age threshold after which a cache entry is considered stale (30 min)
 const STALE_MS = 30 * 60 * 1000;
 
 function sensorsHealth() {
-  const latest = getLatestReading();
-  if (!latest) return { last_seen: null, status: 'danger' };
-  const diffSec = (Date.now() - new Date(latest.created_at).getTime()) / 1000;
+  const lastSeen = getLastSeenAt();
+  if (!lastSeen) return { last_seen: null, status: 'danger' };
+  const diffSec = (Date.now() - lastSeen.getTime()) / 1000;
   const status  = diffSec < 30 ? 'ok' : diffSec < 120 ? 'warning' : 'danger';
-  return { last_seen: new Date(latest.created_at).toISOString(), status };
+  return { last_seen: lastSeen.toISOString(), status };
 }
 
 // Map internal cache-source keys to the spec's field names

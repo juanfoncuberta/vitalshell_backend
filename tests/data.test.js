@@ -88,6 +88,30 @@ describe('GET /api/data', () => {
     expect(['ok', 'warning', 'danger', 'unknown']).toContain(aq.aqi.status);
   });
 
+  it('sensors reflect lastKnown — values survive across partial POSTs', async () => {
+    // Establish all four fields with known values
+    await request(app)
+      .post('/api/sensors')
+      .set('X-API-Key', 'test-key')
+      .send({ temperature: 11.1, humidity: 22.2, water_level: 33.3, battery_level: 44.4 });
+
+    // Second POST updates only temperature
+    await request(app)
+      .post('/api/sensors')
+      .set('X-API-Key', 'test-key')
+      .send({ temperature: 99.9 });
+
+    const res = await request(app)
+      .get('/api/data')
+      .set('X-API-Key', 'test-key');
+
+    const s = res.body.sensors;
+    expect(s.temperature.value).toBe(99.9);   // updated
+    expect(s.humidity.value).toBe(22.2);       // retained
+    expect(s.water_level.value).toBe(33.3);    // retained
+    expect(s.battery_level.value).toBe(44.4);  // retained
+  });
+
   it('calculated_metrics has all required fields', async () => {
     const res = await request(app)
       .get('/api/data')

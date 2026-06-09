@@ -11,20 +11,40 @@ const {
 } = require('../services/apis');
 const { getLatestReading } = require('../services/sensors');
 const { runRulesEngine } = require('../services/rules');
+const { evaluateAlerts } = require('../services/alerts');
 const { broadcast } = require('../websocket');
+
+function withFutureHourly(result) {
+  const hourly = result?.hourly_forecast;
+  const now    = result?.current_local_time;
+  if (!hourly?.time || !now) return result;
+
+  const indices = hourly.time.map((_, i) => i).filter(i => hourly.time[i] > now);
+  const filtered = {};
+  for (const key of Object.keys(hourly)) {
+    filtered[key] = Array.isArray(hourly[key]) ? indices.map(i => hourly[key][i]) : hourly[key];
+  }
+  return { ...result, hourly_forecast: filtered };
+}
 
 // Re-run rules after an API fetch and broadcast any new rules
 async function refreshAndEvaluate(label, fetchFn, wsType) {
   console.log(`[cron] Fetching ${label}...`);
   try {
     const result = await fetchFn();
-    if (result && wsType) broadcast(wsType, result);
+    if (result && wsType) {
+      const payload = wsType === 'environmental_update' ? withFutureHourly(result) : result;
+      broadcast(wsType, payload);
+    }
 
     // Re-evaluate rules with latest sensor reading + full API cache
     const sensor  = getLatestReading();
     const apiData = getAllCached();
     const newRules = runRulesEngine(sensor, apiData);
     newRules.forEach(rule => broadcast('rule_update', rule));
+
+    const newAlerts = evaluateAlerts(sensor, apiData);
+    newAlerts.forEach(alert => broadcast('alert', alert));
 
     console.log(`[cron] ${label} updated. New rules: ${newRules.length}`);
   } catch (err) {
@@ -76,6 +96,11 @@ function startCronJobs() {
       clients:        require('../websocket').getClientCount(),
       uptime_seconds: Math.round(process.uptime()),
     });
+
+    const sensor  = getLatestReading();
+    const apiData = getAllCached();
+    const newAlerts = evaluateAlerts(sensor, apiData);
+    newAlerts.forEach(alert => broadcast('alert', alert));
   });
 
   console.log('[cron] All jobs scheduled');

@@ -76,3 +76,56 @@ describe('GET /api/sensors/history', () => {
     expect(res.body.count).toBe(res.body.data.length);
   });
 });
+
+describe('POST /api/sensors/heartbeat', () => {
+  it('returns 401 without API key', async () => {
+    const res = await request(app).post('/api/sensors/heartbeat');
+    expect(res.status).toBe(401);
+  });
+
+  it('returns { ok: true } with valid API key', async () => {
+    const res = await request(app)
+      .post('/api/sensors/heartbeat')
+      .set('X-API-Key', 'test-key');
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ ok: true });
+  });
+
+  it('does not write a new row to SQLite', async () => {
+    const countIntervals = async () => {
+      const r = await request(app).get('/api/sensors/history?period=1h');
+      return r.body.data.reduce((n, day) => n + day.intervals.length, 0);
+    };
+
+    const before = await countIntervals();
+    await request(app)
+      .post('/api/sensors/heartbeat')
+      .set('X-API-Key', 'test-key');
+    const after = await countIntervals();
+
+    expect(after).toBe(before);
+  });
+});
+
+describe('POST /api/sensors — partial fields', () => {
+  it('accepts a reading with only one field', async () => {
+    const res = await request(app)
+      .post('/api/sensors')
+      .set('X-API-Key', 'test-key')
+      .send({ humidity: 77 });
+    expect(res.status).toBe(201);
+    expect(res.body.reading.humidity).toBe(77);
+  });
+
+  it('stores null in SQLite for fields not sent', async () => {
+    const res = await request(app)
+      .post('/api/sensors')
+      .set('X-API-Key', 'test-key')
+      .send({ water_level: 50 });
+    expect(res.status).toBe(201);
+    expect(res.body.reading.water_level).toBe(50);
+    expect(res.body.reading.temperature).toBeNull();
+    expect(res.body.reading.humidity).toBeNull();
+    expect(res.body.reading.battery_level).toBeNull();
+  });
+});

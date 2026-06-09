@@ -7,7 +7,6 @@ const dataRouter    = require('./routes/data');
 const rulesRouter   = require('./routes/rules');
 const comfortRouter = require('./routes/comfort');
 const healthRouter  = require('./routes/health');
-const debugRouter   = require('./routes/debug');
 
 const app = express();
 
@@ -17,7 +16,6 @@ app.use(express.json());
 // Public routes
 app.use('/api/sensors',      sensorsRouter);
 app.use('/api/system/health', healthRouter);
-app.use('/api/debug',        debugRouter);   // TODO: remove after debugging
 
 // Protected routes
 app.use('/api/data',    requireApiKey, dataRouter);

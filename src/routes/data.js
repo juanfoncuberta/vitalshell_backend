@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { getLatestReading } = require('../services/sensors');
+const { getLastKnown, getLastSeenAt } = require('../services/sensors');
 const { getAllCached } = require('../services/apis');
 const { getComfort } = require('../services/comfort');
 
@@ -52,12 +52,11 @@ function sv(value, status) {
 
 // ── System health ────────────────────────────────────────────────────────────
 
-function computeSensorsHealth(latest) {
-  if (!latest) return { sensors_last_seen: null, sensors_status: 'danger' };
-  const ts      = latest.created_at;
-  const diffSec = (Date.now() - new Date(ts).getTime()) / 1000;
+function computeSensorsHealth(lastSeenAt) {
+  if (!lastSeenAt) return { sensors_last_seen: null, sensors_status: 'danger' };
+  const diffSec = (Date.now() - lastSeenAt.getTime()) / 1000;
   const status  = diffSec < 30 ? 'ok' : diffSec < 120 ? 'warning' : 'danger';
-  return { sensors_last_seen: new Date(ts).toISOString(), sensors_status: status };
+  return { sensors_last_seen: lastSeenAt.toISOString(), sensors_status: status };
 }
 
 function computeApisStatus(apis) {
@@ -70,9 +69,9 @@ function computeApisStatus(apis) {
 
 // ── Calculated metrics ───────────────────────────────────────────────────────
 
-function computeComfortScore(latest, comfort) {
-  if (!latest || !comfort) return null;
-  const { temperature: t, humidity: h } = latest;
+function computeComfortScore(lastKnown, comfort) {
+  if (!lastKnown || !comfort) return null;
+  const { temperature: t, humidity: h } = lastKnown;
   if (t === null || h === null) return null;
 
   const tMid   = (comfort.temperature_min + comfort.temperature_max) / 2;
@@ -143,11 +142,12 @@ function buildForecast(weather) {
 
 // GET /api/data
 router.get('/', (req, res) => {
-  const latest  = getLatestReading();
-  const apis    = getAllCached();
-  const comfort = getComfort();
+  const lastKnown  = getLastKnown();
+  const lastSeenAt = getLastSeenAt();
+  const apis       = getAllCached();
+  const comfort    = getComfort();
 
-  const sensorsHealth = computeSensorsHealth(latest);
+  const sensorsHealth = computeSensorsHealth(lastSeenAt);
   const apisStatus    = computeApisStatus(apis);
 
   const weather   = apis.weather    ?? {};
@@ -162,8 +162,8 @@ router.get('/', (req, res) => {
   // Prefer EFFIS FWI (real measurement) over weather-computed fallback
   const fwiValue      = effis.fwi_today ?? fwi.fwi_today ?? null;
 
-  const comfortScore  = computeComfortScore(latest, comfort);
-  const waterAutonomy = computeWaterAutonomy(latest?.water_level);
+  const comfortScore  = computeComfortScore(lastKnown, comfort);
+  const waterAutonomy = computeWaterAutonomy(lastKnown.water_level);
   const energySource  = computeEnergySource(nasaPower, renewablesPct);
   const savingsToday  = computeSavingsToday(energySource.solar_pct);
 
@@ -177,10 +177,10 @@ router.get('/', (req, res) => {
     },
 
     sensors: {
-      temperature:   sv(latest?.temperature,   sensorStatus('temperature',   latest?.temperature)),
-      humidity:      sv(latest?.humidity,       sensorStatus('humidity',      latest?.humidity)),
-      water_level:   sv(latest?.water_level,    sensorStatus('water_level',   latest?.water_level)),
-      battery_level: sv(latest?.battery_level,  sensorStatus('battery_level', latest?.battery_level)),
+      temperature:   sv(lastKnown.temperature,   sensorStatus('temperature',   lastKnown.temperature)),
+      humidity:      sv(lastKnown.humidity,       sensorStatus('humidity',      lastKnown.humidity)),
+      water_level:   sv(lastKnown.water_level,    sensorStatus('water_level',   lastKnown.water_level)),
+      battery_level: sv(lastKnown.battery_level,  sensorStatus('battery_level', lastKnown.battery_level)),
     },
 
     environmental_context: {

@@ -1,5 +1,26 @@
 const { getDb } = require('../db');
 
+let heartbeatAt = null;
+let lastKnown = { temperature: null, humidity: null, water_level: null, battery_level: null };
+
+function setHeartbeat() {
+  heartbeatAt = new Date();
+}
+
+function getLastKnown() {
+  return { ...lastKnown };
+}
+
+function getLastSeenAt() {
+  const db = getDb();
+  const row = db.prepare('SELECT created_at FROM sensors ORDER BY id DESC LIMIT 1').get();
+  const dbDate = row ? new Date(row.created_at) : null;
+  if (!dbDate && !heartbeatAt) return null;
+  if (!dbDate) return heartbeatAt;
+  if (!heartbeatAt) return dbDate;
+  return heartbeatAt > dbDate ? heartbeatAt : dbDate;
+}
+
 const PERIOD_SECONDS = {
   '1h':  3600,
   '24h': 86400,
@@ -12,13 +33,20 @@ function saveReading(data) {
     INSERT INTO sensors (temperature, humidity, water_level, battery_level, timestamp)
     VALUES (@temperature, @humidity, @water_level, @battery_level, @timestamp)
   `);
-  const info = stmt.run({
+  stmt.run({
     temperature:   data.temperature   ?? null,
     humidity:      data.humidity      ?? null,
     water_level:   data.water_level   ?? null,
     battery_level: data.battery_level ?? null,
     timestamp:     data.timestamp     ?? new Date().toISOString(),
   });
+
+  for (const field of ['temperature', 'humidity', 'water_level', 'battery_level']) {
+    if (data[field] !== null && data[field] !== undefined) {
+      lastKnown[field] = data[field];
+    }
+  }
+
   return getLatestReading();
 }
 
@@ -65,4 +93,4 @@ function isOnline() {
   return diffMs < 10 * 60 * 1000;
 }
 
-module.exports = { saveReading, getLatestReading, getHistory, isOnline };
+module.exports = { saveReading, getLatestReading, getHistory, isOnline, setHeartbeat, getLastSeenAt, getLastKnown };
