@@ -267,13 +267,14 @@ function runRulesEngine(sensorData, apiData) {
   const created = [];
 
   for (const candidate of candidates) {
-    // Avoid duplicate active/pending rules for the same condition
     const existing = db.prepare(`
       SELECT id FROM rules
-      WHERE condition = ? AND status IN ('active', 'pending')
-    `).get(candidate.condition);
+      WHERE action = ? AND status IN ('active', 'pending')
+    `).get(candidate.action);
 
-    if (!existing) {
+    if (existing) {
+      db.prepare(`UPDATE rules SET updated_at = datetime('now') WHERE id = ?`).run(existing.id);
+    } else {
       const rule = createRule({ ...candidate, status: 'pending' });
       created.push(rule);
     }
