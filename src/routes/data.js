@@ -98,14 +98,31 @@ function estimateCO2(renewablesPct) {
   return Math.round(400 - (renewablesPct / 100) * 380);
 }
 
-// Solar/battery/grid breakdown from irradiance and national renewable %
-function computeEnergySource(nasaPower, renewablesPct) {
+// Solar/battery/grid breakdown from irradiance (W/m²) and sensor battery level
+function computeEnergySource(nasaPower, batteryLevel) {
   const irr      = nasaPower?.irradiance_kwh_m2 ?? null;
   // NASA POWER uses -999 as fill value for missing days
   const validIrr = irr !== null && irr > 0 ? irr : null;
-  const solarPct = validIrr !== null ? Math.min(75, Math.round(validIrr * 10)) : 40;
-  const gridPct  = Math.max(5, Math.round((100 - (renewablesPct ?? 50)) * 0.25));
-  const battPct  = Math.max(0, 100 - solarPct - gridPct);
+
+  let solarPct;
+  if (validIrr === null) {
+    solarPct = 10;
+  } else if (validIrr > 500) {
+    solarPct = Math.round(60 + Math.min(20, (validIrr - 500) / 500 * 20));
+  } else if (validIrr > 200) {
+    solarPct = Math.round(30 + (validIrr - 200) / 300 * 20);
+  } else {
+    solarPct = Math.round(validIrr / 200 * 20);
+  }
+
+  const bat     = batteryLevel ?? null;
+  const battPct = bat === null
+    ? 10
+    : bat > 50
+      ? Math.round(15 + (bat - 50) / 50 * 15)  // 15–30% when battery > 50%
+      : Math.round(bat / 50 * 15);              // 0–15% when battery ≤ 50%
+
+  const gridPct = Math.max(0, 100 - solarPct - battPct);
   return { solar_pct: solarPct, battery_pct: battPct, grid_pct: gridPct };
 }
 
@@ -164,7 +181,7 @@ router.get('/', (req, res) => {
 
   const comfortScore  = computeComfortScore(lastKnown, comfort);
   const waterAutonomy = computeWaterAutonomy(lastKnown.water_level);
-  const energySource  = computeEnergySource(nasaPower, renewablesPct);
+  const energySource  = computeEnergySource(nasaPower, lastKnown.battery_level);
   const savingsToday  = computeSavingsToday(energySource.solar_pct);
 
   res.json({
@@ -213,6 +230,7 @@ router.get('/', (req, res) => {
     calculated_metrics: {
       comfort_score:       sv(comfortScore,  metricStatus('comfort_score',       comfortScore)),
       water_autonomy_days: sv(waterAutonomy, metricStatus('water_autonomy_days', waterAutonomy)),
+      water_level_pct:     sv(lastKnown.water_level, sensorStatus('water_level', lastKnown.water_level)),
       energy_source:       energySource,
       savings_eur_today:   sv(savingsToday,  'ok'),
     },
