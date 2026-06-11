@@ -7,6 +7,7 @@ const dataRouter    = require('./routes/data');
 const rulesRouter   = require('./routes/rules');
 const comfortRouter = require('./routes/comfort');
 const healthRouter  = require('./routes/health');
+const chatRouter    = require('./routes/chat');
 
 const app = express();
 
@@ -21,6 +22,7 @@ app.use('/api/system/health', healthRouter);
 app.use('/api/data',    requireApiKey, dataRouter);
 app.use('/api/rules',   requireApiKey, rulesRouter);
 app.use('/api/comfort', requireApiKey, comfortRouter);
+app.use('/api/chat',    requireApiKey, chatRouter);
 
 // 404 handler
 app.use((req, res) => {

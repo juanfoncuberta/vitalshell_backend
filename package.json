@@ -11,6 +11,7 @@
     "test:coverage": "jest --coverage --runInBand"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.104.1",
     "axios": "^1.7.2",
     "better-sqlite3": "^12.10.0",
     "cors": "^2.8.5",
@@ -26,7 +27,9 @@
   },
   "jest": {
     "testEnvironment": "node",
-    "testMatch": ["**/tests/**/*.test.js"],
+    "testMatch": [
+      "**/tests/**/*.test.js"
+    ],
     "coverageDirectory": "coverage",
     "collectCoverageFrom": [
       "src/**/*.js",
