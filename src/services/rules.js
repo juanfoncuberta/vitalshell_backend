@@ -268,8 +268,7 @@ function runRulesEngine(sensorData, apiData) {
 
   for (const candidate of candidates) {
     const existing = db.prepare(`
-      SELECT id FROM rules
-      WHERE action = ? AND status IN ('active', 'pending')
+      SELECT id FROM rules WHERE action = ? AND status IN ('active', 'pending') LIMIT 1
     `).get(candidate.action);
 
     if (existing) {

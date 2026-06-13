@@ -1,8 +1,8 @@
-const request = require('supertest');
-const { evaluateRules, runRulesEngine } = require('../src/services/rules');
-
+process.env.DB_PATH = ':memory:';
 process.env.API_KEY = 'test-key';
 
+const request = require('supertest');
+const { evaluateRules, runRulesEngine, listRules } = require('../src/services/rules');
 const app = require('../src/app');
 
 // ---------------------------------------------------------------------------
@@ -71,6 +71,43 @@ describe('evaluateRules (dummy AI)', () => {
       { weather: { temperature: 22 }, effis: { fire_risk: 'low' }, redata: { renewables_percent: 40 } }
     );
     expect(rules.length).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// runRulesEngine — deduplication
+// ---------------------------------------------------------------------------
+
+describe('runRulesEngine — deduplication', () => {
+  it('does not create a duplicate rule when action already exists in active/pending', () => {
+    const sensorData = { temperature: 35 }; // triggers activate_ventilation
+    const apiData    = {};
+
+    const first  = runRulesEngine(sensorData, apiData);
+    const second = runRulesEngine(sensorData, apiData);
+
+    expect(first.length).toBeGreaterThan(0);
+    expect(second.length).toBe(0); // no new rules — already exists
+
+    const all = listRules();
+    const ventilation = all.filter(r => r.action === 'activate_ventilation');
+    expect(ventilation.length).toBe(1);
+  });
+
+  it('creates a new rule after the previous one is no longer active/pending', () => {
+    const { updateRuleStatus } = require('../src/services/rules');
+    const sensorData = { battery_level: 10 }; // triggers alert_low_battery
+    const apiData    = {};
+
+    const first = runRulesEngine(sensorData, apiData);
+    expect(first.length).toBeGreaterThan(0);
+
+    // Mark it completed — dedup should no longer block a new one
+    updateRuleStatus(first[0].id, 'completed');
+
+    const second = runRulesEngine(sensorData, apiData);
+    expect(second.length).toBe(1);
+    expect(second[0].action).toBe('alert_low_battery');
   });
 });
 
