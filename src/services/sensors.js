@@ -45,6 +45,13 @@ const PERIOD_SECONDS = {
   '7d':  604800,
 };
 
+// SQL expression that truncates created_at to the aggregation bucket for each period
+const BUCKET_SQL = {
+  '1h':  `strftime('%Y-%m-%dT%H:%M', created_at)`,
+  '24h': `strftime('%Y-%m-%dT%H:', created_at) || printf('%02d', (CAST(strftime('%M', created_at) AS INTEGER) / 15) * 15)`,
+  '7d':  `strftime('%Y-%m-%dT%H:00', created_at)`,
+};
+
 function saveReading(data) {
   const db = getDb();
   const stmt = db.prepare(`
@@ -76,30 +83,21 @@ function getLatestReading() {
 function getHistory(period = '24h') {
   const db = getDb();
   const seconds = PERIOD_SECONDS[period] ?? PERIOD_SECONDS['24h'];
-  const since = new Date(Date.now() - seconds * 1000).toISOString();
+  const since  = new Date(Date.now() - seconds * 1000).toISOString();
+  const bucket = BUCKET_SQL[period] ?? BUCKET_SQL['24h'];
 
-  // Fetch all rows with their day and time extracted
-  const rows = db.prepare(`
+  return db.prepare(`
     SELECT
-      date(created_at)                 AS date,
-      strftime('%H:%M:%S', created_at) AS time,
-      temperature,
-      humidity,
-      water_level,
-      battery_level
+      ${bucket}                          AS timestamp,
+      ROUND(AVG(temperature),   1)       AS temperature,
+      ROUND(AVG(humidity),      1)       AS humidity,
+      ROUND(AVG(water_level),   1)       AS water_level,
+      ROUND(AVG(battery_level), 1)       AS battery_level
     FROM sensors
     WHERE datetime(created_at) >= datetime(?)
-    ORDER BY created_at ASC
+    GROUP BY ${bucket}
+    ORDER BY timestamp ASC
   `).all(since);
-
-  // Group intervals by calendar date
-  const dateMap = {};
-  for (const { date, ...interval } of rows) {
-    if (!dateMap[date]) dateMap[date] = { date, intervals: [] };
-    dateMap[date].intervals.push(interval);
-  }
-
-  return Object.values(dateMap);
 }
 
 function isOnline() {

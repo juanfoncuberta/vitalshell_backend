@@ -46,7 +46,7 @@ describe('GET /api/sensors/history', () => {
     expect(res.status).toBe(400);
   });
 
-  it('returns history grouped by day with readings array', async () => {
+  it('returns flat aggregated points with timestamp and sensor averages', async () => {
     // Insert a reading first
     await request(app)
       .post('/api/sensors')
@@ -58,21 +58,21 @@ describe('GET /api/sensors/history', () => {
     expect(res.body).toHaveProperty('period', '1h');
     expect(Array.isArray(res.body.data)).toBe(true);
 
-    // Each entry is a date object with an intervals array
-    const day = res.body.data[0];
-    expect(day).toHaveProperty('date');
-    expect(Array.isArray(day.intervals)).toBe(true);
-    expect(day.intervals[0]).toHaveProperty('temperature');
-    expect(day.intervals[0]).toHaveProperty('time');
-    expect(day.intervals[0].time).toMatch(/^\d{2}:\d{2}:\d{2}$/);
-    expect(day.intervals[0]).not.toHaveProperty('id');
-    expect(day.intervals[0]).not.toHaveProperty('created_at');
+    const point = res.body.data[0];
+    expect(point).toHaveProperty('timestamp');
+    expect(point.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/);
+    expect(point).toHaveProperty('temperature');
+    expect(point).toHaveProperty('humidity');
+    expect(point).toHaveProperty('water_level');
+    expect(point).toHaveProperty('battery_level');
+    expect(point).not.toHaveProperty('id');
+    expect(point).not.toHaveProperty('created_at');
+    expect(point).not.toHaveProperty('intervals');
   });
 
-  it('count reflects number of days, not readings', async () => {
+  it('count reflects number of aggregated points', async () => {
     const res = await request(app).get('/api/sensors/history?period=24h');
     expect(res.status).toBe(200);
-    // count is the number of day groups
     expect(res.body.count).toBe(res.body.data.length);
   });
 });
@@ -94,7 +94,7 @@ describe('POST /api/sensors/heartbeat', () => {
   it('does not write a new row to SQLite', async () => {
     const countIntervals = async () => {
       const r = await request(app).get('/api/sensors/history?period=1h');
-      return r.body.data.reduce((n, day) => n + day.intervals.length, 0);
+      return r.body.data.length;
     };
 
     const before = await countIntervals();

@@ -126,5 +126,19 @@ describe('GET /api/data', () => {
     expect(m).toHaveProperty('energy_source.battery_pct');
     expect(m).toHaveProperty('energy_source.grid_pct');
     expect(m).toHaveProperty('savings_eur_today.value');
+    expect(m).toHaveProperty('savings_trend');
+    expect(m.savings_trend).toHaveProperty('pct');
+    expect(m.savings_trend).toHaveProperty('direction');
+  });
+
+  it('savings_trend has a numeric pct and direction consistent with its sign', async () => {
+    const res = await request(app)
+      .get('/api/data')
+      .set('X-API-Key', 'test-key');
+
+    const { pct, direction } = res.body.calculated_metrics.savings_trend;
+    expect(typeof pct).toBe('number');
+    expect(['up', 'down']).toContain(direction);
+    expect(direction).toBe(pct > 0 ? 'up' : 'down');
   });
 });
