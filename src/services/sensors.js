@@ -1,7 +1,25 @@
 const { getDb } = require('../db');
 
 let heartbeatAt = null;
-let lastKnown = { temperature: null, humidity: null, water_level: null, battery_level: null };
+
+function loadLastKnownFromDb() {
+  const db = getDb();
+  const row = db.prepare(`
+    SELECT
+      (SELECT temperature   FROM sensors WHERE temperature   IS NOT NULL ORDER BY id DESC LIMIT 1) AS temperature,
+      (SELECT humidity      FROM sensors WHERE humidity      IS NOT NULL ORDER BY id DESC LIMIT 1) AS humidity,
+      (SELECT water_level   FROM sensors WHERE water_level   IS NOT NULL ORDER BY id DESC LIMIT 1) AS water_level,
+      (SELECT battery_level FROM sensors WHERE battery_level IS NOT NULL ORDER BY id DESC LIMIT 1) AS battery_level
+  `).get();
+  return {
+    temperature:   row?.temperature   ?? null,
+    humidity:      row?.humidity      ?? null,
+    water_level:   row?.water_level   ?? null,
+    battery_level: row?.battery_level ?? null,
+  };
+}
+
+let lastKnown = loadLastKnownFromDb();
 
 function setHeartbeat() {
   heartbeatAt = new Date();

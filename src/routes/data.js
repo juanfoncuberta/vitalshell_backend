@@ -132,6 +132,13 @@ function computeSavingsToday(solarPct) {
   return Math.round(solarPct / 100 * 20 * 0.22 * 100) / 100;
 }
 
+// Deterministic month-based trend — same value all month, replace with real calc when historical data exists
+function computeSavingsTrend() {
+  const MONTHLY_TRENDS = [8.2, -3.1, 12.5, 5.8, -1.2, 15.3, 9.7, -4.5, 11.2, 6.8, -2.3, 13.1];
+  const pct = MONTHLY_TRENDS[new Date().getMonth()];
+  return { pct, direction: pct > 0 ? 'up' : 'down' };
+}
+
 // ── Forecast builder ─────────────────────────────────────────────────────────
 
 function buildForecast(weather) {
@@ -183,6 +190,7 @@ router.get('/', (req, res) => {
   const waterAutonomy = computeWaterAutonomy(lastKnown.water_level);
   const energySource  = computeEnergySource(nasaPower, lastKnown.battery_level);
   const savingsToday  = computeSavingsToday(energySource.solar_pct);
+  const savingsTrend  = computeSavingsTrend();
 
   res.json({
     timestamp: new Date().toISOString(),
@@ -233,6 +241,7 @@ router.get('/', (req, res) => {
       water_level_pct:     sv(lastKnown.water_level, sensorStatus('water_level', lastKnown.water_level)),
       energy_source:       energySource,
       savings_eur_today:   sv(savingsToday,  'ok'),
+      savings_trend:       savingsTrend,
     },
   });
 });
