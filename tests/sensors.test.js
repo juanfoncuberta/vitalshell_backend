@@ -75,6 +75,55 @@ describe('GET /api/sensors/history', () => {
     expect(res.status).toBe(200);
     expect(res.body.count).toBe(res.body.data.length);
   });
+
+  it('forward-fills null fields from the last non-null value in earlier buckets', async () => {
+    const now = Date.now();
+
+    // Bucket A (2 min ago) — temperature only
+    await request(app)
+      .post('/api/sensors')
+      .set('X-API-Key', 'test-key')
+      .send({ temperature: 29.9, timestamp: new Date(now - 2 * 60000).toISOString() });
+
+    // Bucket B (1 min ago) — humidity only; temperature is null in this bucket
+    await request(app)
+      .post('/api/sensors')
+      .set('X-API-Key', 'test-key')
+      .send({ humidity: 55.5, timestamp: new Date(now - 1 * 60000).toISOString() });
+
+    const res = await request(app).get('/api/sensors/history?period=1h');
+    expect(res.status).toBe(200);
+
+    // The bucket that received only humidity should have temperature forward-filled
+    const bucketB = res.body.data.find(p => p.humidity === 55.5);
+    expect(bucketB).toBeDefined();
+    expect(bucketB.temperature).toBe(29.9);
+  });
+
+  it('seeds forward-fill from data before the query window', async () => {
+    const now = Date.now();
+
+    // Reading outside the 1h window — sets a known temperature
+    await request(app)
+      .post('/api/sensors')
+      .set('X-API-Key', 'test-key')
+      .send({ temperature: 18.3, timestamp: new Date(now - 90 * 60000).toISOString() });
+
+    // Reading inside the 1h window — no temperature, only humidity
+    await request(app)
+      .post('/api/sensors')
+      .set('X-API-Key', 'test-key')
+      .send({ humidity: 42.0, timestamp: new Date(now - 10 * 60000).toISOString() });
+
+    const res = await request(app).get('/api/sensors/history?period=1h');
+    expect(res.status).toBe(200);
+
+    // The first bucket in the window has no temperature reading,
+    // so it should be filled from the pre-window value (18.3)
+    const firstInWindow = res.body.data.find(p => p.humidity === 42.0);
+    expect(firstInWindow).toBeDefined();
+    expect(firstInWindow.temperature).toBe(18.3);
+  });
 });
 
 describe('POST /api/sensors/heartbeat', () => {
