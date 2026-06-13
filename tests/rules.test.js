@@ -79,35 +79,47 @@ describe('evaluateRules (dummy AI)', () => {
 // ---------------------------------------------------------------------------
 
 describe('runRulesEngine — deduplication', () => {
-  it('does not create a duplicate rule when action already exists in active/pending', () => {
-    const sensorData = { temperature: 35 }; // triggers activate_ventilation
-    const apiData    = {};
+  const { updateRuleStatus } = require('../src/services/rules');
 
-    const first  = runRulesEngine(sensorData, apiData);
-    const second = runRulesEngine(sensorData, apiData);
-
-    expect(first.length).toBeGreaterThan(0);
-    expect(second.length).toBe(0); // no new rules — already exists
-
-    const all = listRules();
-    const ventilation = all.filter(r => r.action === 'activate_ventilation');
-    expect(ventilation.length).toBe(1);
+  it('creates rule in pending on first trigger', () => {
+    const [rule] = runRulesEngine({ temperature: 35 }, {}); // activate_ventilation
+    expect(rule).toBeDefined();
+    expect(rule.action).toBe('activate_ventilation');
+    expect(rule.status).toBe('pending');
   });
 
-  it('creates a new rule after the previous one is no longer active/pending', () => {
-    const { updateRuleStatus } = require('../src/services/rules');
-    const sensorData = { battery_level: 10 }; // triggers alert_low_battery
-    const apiData    = {};
-
-    const first = runRulesEngine(sensorData, apiData);
-    expect(first.length).toBeGreaterThan(0);
-
-    // Mark it completed — dedup should no longer block a new one
-    updateRuleStatus(first[0].id, 'completed');
-
-    const second = runRulesEngine(sensorData, apiData);
+  it('promotes pending → active on second trigger and returns the updated rule', () => {
+    const second = runRulesEngine({ temperature: 35 }, {});
     expect(second.length).toBe(1);
-    expect(second[0].action).toBe('alert_low_battery');
+    expect(second[0].action).toBe('activate_ventilation');
+    expect(second[0].status).toBe('active');
+  });
+
+  it('keeps active status and only updates updated_at on subsequent triggers', () => {
+    const before = listRules().find(r => r.action === 'activate_ventilation').updated_at;
+    runRulesEngine({ temperature: 35 }, {});
+    const after = listRules().find(r => r.action === 'activate_ventilation').updated_at;
+
+    expect(after >= before).toBe(true);
+    const all = listRules().filter(r => r.action === 'activate_ventilation');
+    expect(all.length).toBe(1);
+    expect(all[0].status).toBe('active');
+  });
+
+  it('creates a new rule after the previous one is completed', () => {
+    const existing = listRules().find(r => r.action === 'activate_ventilation');
+    updateRuleStatus(existing.id, 'completed');
+
+    const created = runRulesEngine({ temperature: 35 }, {});
+    expect(created.length).toBe(1);
+    expect(created[0].status).toBe('pending');
+  });
+
+  it('creates a new pending rule for a different action', () => {
+    const [rule] = runRulesEngine({ battery_level: 10 }, {}); // alert_low_battery
+    expect(rule).toBeDefined();
+    expect(rule.action).toBe('alert_low_battery');
+    expect(rule.status).toBe('pending');
   });
 });
 

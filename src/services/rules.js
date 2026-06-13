@@ -264,22 +264,26 @@ function evaluateRules(sensorData, apiData) {
 function runRulesEngine(sensorData, apiData) {
   const db = getDb();
   const candidates = evaluateRules(sensorData, apiData);
-  const created = [];
+  const changed = [];
 
   for (const candidate of candidates) {
     const existing = db.prepare(`
-      SELECT id FROM rules WHERE action = ? AND status IN ('active', 'pending') LIMIT 1
+      SELECT id, status FROM rules WHERE action = ? AND status IN ('active', 'pending') LIMIT 1
     `).get(candidate.action);
 
     if (existing) {
-      db.prepare(`UPDATE rules SET updated_at = datetime('now') WHERE id = ?`).run(existing.id);
+      if (existing.status === 'pending') {
+        db.prepare(`UPDATE rules SET status = 'active', updated_at = datetime('now') WHERE id = ?`).run(existing.id);
+        changed.push(formatRule(db.prepare('SELECT * FROM rules WHERE id = ?').get(existing.id)));
+      } else {
+        db.prepare(`UPDATE rules SET updated_at = datetime('now') WHERE id = ?`).run(existing.id);
+      }
     } else {
-      const rule = createRule({ ...candidate, status: 'pending' });
-      created.push(rule);
+      changed.push(createRule({ ...candidate, status: 'pending' }));
     }
   }
 
-  return created;
+  return changed;
 }
 
 module.exports = {
